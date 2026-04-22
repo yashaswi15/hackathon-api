@@ -73,6 +73,15 @@ def extract_poly_str(text, var_name):
     return s
 
 
+def sympy_to_math(expr: str) -> str:
+    import re as _re
+    expr = _re.sub(r"\*\*(\d+)", r"^\1", expr)
+    expr = _re.sub(r"(\d)\*([a-zA-Z])", r"\1\2", expr)
+    expr = _re.sub(r"(?<![0-9])1([a-zA-Z])", r"\1", expr)
+    expr = _re.sub(r"-1([a-zA-Z])", r"-\1", expr)
+    return expr
+
+
 def try_polynomial_gcd(query: str):
     try:
         from sympy import symbols, gcd, Poly, expand, factor
@@ -99,9 +108,9 @@ def try_polynomial_gcd(query: str):
             r = sorted(sympy_roots(g.as_expr(), x).keys())
             return ", ".join(str(int(ri)) for ri in r)
         elif "expanded" in q_lower:
-            return str(expand(g.as_expr()))
+            return sympy_to_math(str(expand(g.as_expr())))
         elif "factored" in q_lower:
-            return str(factor(g.as_expr()))
+            return sympy_to_math(str(factor(g.as_expr())))
         else:
             return str(g.degree())
 

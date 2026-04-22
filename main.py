@@ -175,7 +175,7 @@ async def answer(request: Request):
 
 @app.get("/debug")
 async def debug():
-    test = 'The following is a transaction log. Extract the FIRST transaction greater than $100 made by a user whose name starts with S. Log: - Alice paid $45 | Sam paid $80 | Steve paid $210 | Bob paid $310 - Sophie paid $95 | Sara paid $150 | Tom paid $500 | Sally paid $130'
+    test = 'Let: p(x) = (x−1)(x−2)(x−3)(x−4)(x−5)(x−6) q(x) = (x−3)(x−4)(x−5)(x−6)(x−7)(x−8) Compute the degree of the GCD polynomial gcd(p(x), q(x)) over Q. Output only the integer.'
     result = await call_llm(test)
     return {
         "api_key_set": bool(CLAUDE_API_KEY),

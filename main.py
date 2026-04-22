@@ -34,7 +34,8 @@ async def fetch_asset_content(url: str) -> str:
         return f"[Failed to fetch {url}: {e}]"
 
 
-async def call_llm(query: str, asset_context: str = "") -> str:
+async def call_llm(query: str, asset_context: str = "") -> dict:
+    """Returns dict with 'answer' and 'debug' info."""
     user_msg = query
     if asset_context:
         user_msg = f"Context from assets:\n{asset_context}\n\nQuery: {query}"
@@ -46,27 +47,35 @@ async def call_llm(query: str, asset_context: str = "") -> str:
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024}
     }
 
-    # Try primary model, fallback to lite — no retries, just move on
     models = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
+    debug_info = []
 
     async with httpx.AsyncClient(timeout=18.0) as client:
         for model in models:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
             try:
                 resp = await client.post(url, json=payload)
-                if resp.status_code == 429:
-                    continue  # try next model immediately, no waiting
-                resp.raise_for_status()
+                status = resp.status_code
+                body = resp.text[:500]
+                debug_info.append(f"{model}: status={status}, body={body}")
+
+                if status == 429:
+                    continue
+                if status != 200:
+                    continue
+
                 data = resp.json()
                 candidates = data.get("candidates", [])
                 if candidates:
                     parts = candidates[0].get("content", {}).get("parts", [])
                     if parts:
-                        return parts[0].get("text", "").strip()
-            except Exception:
+                        return {"answer": parts[0].get("text", "").strip(), "debug": debug_info}
+
+            except Exception as e:
+                debug_info.append(f"{model}: exception={str(e)}")
                 continue
 
-    return "Unable to process query."
+    return {"answer": None, "debug": debug_info}
 
 
 @app.post("/api/answer")
@@ -93,7 +102,24 @@ async def answer(request: Request):
             asset_context = "\n\n".join(contents)
 
     result = await call_llm(query, asset_context)
-    return {"output": result}
+
+    if result["answer"]:
+        return {"output": result["answer"]}
+    else:
+        return {"output": "Unable to process query."}
+
+
+# DEBUG ENDPOINT — hit this in browser to see exactly what's failing
+@app.get("/debug")
+async def debug():
+    """Test Gemini directly and show raw response."""
+    result = await call_llm("What is 2 + 2?")
+    return {
+        "api_key_set": bool(GEMINI_API_KEY),
+        "api_key_first_10": GEMINI_API_KEY[:10] + "..." if GEMINI_API_KEY else "EMPTY",
+        "debug": result["debug"],
+        "answer": result["answer"]
+    }
 
 
 @app.get("/")

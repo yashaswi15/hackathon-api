@@ -7,21 +7,39 @@ app = FastAPI()
 
 CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
 
-SYSTEM_PROMPT = """You are a precise answer engine. Answer the question directly and concisely.
+SYSTEM_PROMPT = """You are an answer extraction engine. Output ONLY the bare answer with zero extra text.
 
-RULES:
-1. Answer naturally in the most appropriate format for the question.
-2. If asked "who" → give just the name. Example: "Who scored highest?" → "Bob"
-3. If asked "what is X + Y" → give a natural response. Example: "What is 10 + 15?" → "The sum is 25."
-4. If asked to compute/sum/calculate → give just the result. Example: "Sum even numbers" → "10"
-5. If asked to explain or describe → give 1-2 concise sentences.
-6. If asked to summarize → give a brief summary.
-7. Never add unnecessary preamble like "Sure!", "Here's the answer", "I think", "Let me".
-8. Do NOT use markdown, bullet points, or any formatting.
-9. Do NOT add caveats, disclaimers, or extra context unless asked.
+RULES — read carefully:
+- Output the answer ONLY. Nothing before it, nothing after it.
+- No punctuation at the end unless it is part of the answer itself.
+- No "The answer is", "Result:", "Sure!", or any wrapper.
+- No markdown, bullets, asterisks, or formatting.
+- Names → bare name only: Bob
+- Numbers → bare number only: 25
+- Averages/sums/differences → integer if whole, one decimal if not: 85 or 85.5
+- Lists → comma-space separated, no trailing comma: Alice, Bob, Charlie
+- Yes/No → Yes or No
+- True/False → True or False
+- Highest/lowest/max/min of names → just the name: Bob
+- Highest/lowest/max/min of scores → just the number: 90
 
-If context from assets is provided, use it to answer the query.
-"""
+If context is provided, use it. Think carefully, then output ONLY the final answer."""
+
+
+def post_process(text: str) -> str:
+    """Strip common Claude artifacts from output."""
+    text = text.strip()
+    # Remove trailing period if it looks like Claude added one
+    if text.endswith(".") and "\n" not in text and len(text.split()) <= 6:
+        text = text[:-1]
+    # Remove common preamble patterns
+    for prefix in [
+        "The answer is ", "The result is ", "Answer: ", "Result: ",
+        "Output: ", "Response: ", "Sure! ", "Sure, "
+    ]:
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+    return text.strip()
 
 
 async def fetch_asset_content(url: str) -> str:
@@ -40,11 +58,11 @@ async def fetch_asset_content(url: str) -> str:
 async def call_llm(query: str, asset_context: str = "") -> dict:
     user_msg = query
     if asset_context:
-        user_msg = f"Context from assets:\n{asset_context}\n\nQuery: {query}"
+        user_msg = f"Context:\n{asset_context}\n\nQuery: {query}"
 
     payload = {
-        "model": "claude-sonnet-4-5-20250929",
-        "max_tokens": 1024,
+        "model": "claude-sonnet-4-5-20250514",
+        "max_tokens": 256,
         "system": SYSTEM_PROMPT,
         "messages": [
             {"role": "user", "content": user_msg}
@@ -67,20 +85,22 @@ async def call_llm(query: str, asset_context: str = "") -> dict:
                 headers=headers
             )
             status = resp.status_code
-            debug_info.append(f"model=claude-sonnet-4-5: status={status}")
+            debug_info.append(f"status={status}")
 
             if status == 200:
                 data = resp.json()
                 content = data.get("content", [])
                 if content:
-                    return {"answer": content[0].get("text", "").strip(), "debug": debug_info}
+                    raw = content[0].get("text", "").strip()
+                    cleaned = post_process(raw)
+                    return {"answer": cleaned, "raw": raw, "debug": debug_info}
 
             debug_info.append(f"body={resp.text[:300]}")
 
         except Exception as e:
             debug_info.append(f"exception={str(e)}")
 
-    return {"answer": None, "debug": debug_info}
+    return {"answer": None, "raw": None, "debug": debug_info}
 
 
 @app.post("/api/answer")
@@ -116,12 +136,12 @@ async def answer(request: Request):
 
 @app.get("/debug")
 async def debug():
-    result = await call_llm("What is 2 + 2?")
+    result = await call_llm("Alice scored 80, Bob scored 90. Who scored highest?")
     return {
         "api_key_set": bool(CLAUDE_API_KEY),
-        "api_key_first_10": CLAUDE_API_KEY[:10] + "..." if CLAUDE_API_KEY else "EMPTY",
-        "debug": result["debug"],
-        "answer": result["answer"]
+        "raw": result.get("raw"),
+        "answer": result.get("answer"),
+        "debug": result.get("debug"),
     }
 
 

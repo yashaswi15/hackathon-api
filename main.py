@@ -61,7 +61,7 @@ async def call_llm(query: str, asset_context: str = "") -> dict:
         user_msg = f"Context:\n{asset_context}\n\nQuery: {query}"
 
     payload = {
-        "model": "claude-sonnet-4-5-20250514",
+        "model": "claude-sonnet-4-5",
         "max_tokens": 256,
         "system": SYSTEM_PROMPT,
         "messages": [

@@ -7,12 +7,16 @@ from fastapi.responses import JSONResponse
 app = FastAPI()
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_API_KEY_2 = os.environ.get("GEMINI_API_KEY_2", "")
 
-# Three models as fallbacks — if one is rate-limited, try the next
+# All available API keys
+API_KEYS = [k for k in [GEMINI_API_KEY, GEMINI_API_KEY_2] if k]
+
+# Models as fallbacks — separate rate limit pools
 MODELS = [
     "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
-    "gemini-1.5-flash",
+    "gemini-1.5-flash-latest",
 ]
 
 SYSTEM_PROMPT = """You are a precise answer engine. You will receive a query and possibly some context from assets.
@@ -73,46 +77,47 @@ async def call_gemini(query: str, asset_context: str = "") -> str:
     last_error = ""
 
     async with httpx.AsyncClient(timeout=15.0) as client:
-        for model in MODELS:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+        # Try every combination of API key + model
+        for api_key in API_KEYS:
+            for model in MODELS:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
-            for attempt in range(3):
-                try:
-                    response = await client.post(
-                        url,
-                        json=payload,
-                        headers={"Content-Type": "application/json"}
-                    )
+                for attempt in range(2):
+                    try:
+                        response = await client.post(
+                            url,
+                            json=payload,
+                            headers={"Content-Type": "application/json"}
+                        )
 
-                    if response.status_code == 429:
-                        wait_time = (attempt + 1) * 2
-                        await asyncio.sleep(wait_time)
-                        last_error = f"429 on {model}"
-                        continue
+                        if response.status_code == 429:
+                            await asyncio.sleep(2)
+                            last_error = f"429 on {model}"
+                            continue
 
-                    response.raise_for_status()
-                    data = response.json()
+                        response.raise_for_status()
+                        data = response.json()
 
-                    candidates = data.get("candidates", [])
-                    if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        if parts:
-                            return parts[0].get("text", "").strip()
+                        candidates = data.get("candidates", [])
+                        if candidates:
+                            parts = candidates[0].get("content", {}).get("parts", [])
+                            if parts:
+                                return parts[0].get("text", "").strip()
 
-                    last_error = f"Empty response from {model}"
-                    break
+                        last_error = f"Empty response from {model}"
+                        break
 
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code == 429:
-                        await asyncio.sleep((attempt + 1) * 2)
-                        last_error = f"429 on {model}"
-                        continue
-                    last_error = str(e)
-                    break
+                    except httpx.HTTPStatusError as e:
+                        if e.response.status_code == 429:
+                            await asyncio.sleep(2)
+                            last_error = f"429 on {model}"
+                            continue
+                        last_error = str(e)
+                        break
 
-                except Exception as e:
-                    last_error = str(e)
-                    break
+                    except Exception as e:
+                        last_error = str(e)
+                        break
 
     return f"Error: All models failed. Last error: {last_error}"
 

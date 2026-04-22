@@ -1,6 +1,5 @@
 import os
-import json
-import re
+import asyncio
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -8,7 +7,13 @@ from fastapi.responses import JSONResponse
 app = FastAPI()
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+
+# Three models as fallbacks — if one is rate-limited, try the next
+MODELS = [
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+]
 
 SYSTEM_PROMPT = """You are a precise answer engine. You will receive a query and possibly some context from assets.
 
@@ -38,7 +43,7 @@ async def fetch_asset_content(url: str) -> str:
             response.raise_for_status()
             content_type = response.headers.get("content-type", "")
             if "text" in content_type or "json" in content_type or "html" in content_type:
-                return response.text[:5000]  # Limit to avoid token overflow
+                return response.text[:5000]
             else:
                 return f"[Binary content from {url}, type: {content_type}]"
     except Exception as e:
@@ -46,12 +51,12 @@ async def fetch_asset_content(url: str) -> str:
 
 
 async def call_gemini(query: str, asset_context: str = "") -> str:
-    """Call Gemini API and return the response text."""
-    
+    """Call Gemini API with retry across multiple models."""
+
     user_message = query
     if asset_context:
         user_message = f"Context from provided assets:\n{asset_context}\n\nQuery: {query}"
-    
+
     payload = {
         "contents": [
             {
@@ -64,28 +69,52 @@ async def call_gemini(query: str, asset_context: str = "") -> str:
             "maxOutputTokens": 1024
         }
     }
-    
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(
-                GEMINI_URL,
-                json=payload,
-                headers={"Content-Type": "application/json"}
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            # Extract text from Gemini response
-            candidates = data.get("candidates", [])
-            if candidates:
-                parts = candidates[0].get("content", {}).get("parts", [])
-                if parts:
-                    return parts[0].get("text", "").strip()
-            
-            return "Unable to generate response."
-    
-    except Exception as e:
-        return f"Error: {str(e)}"
+
+    last_error = ""
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for model in MODELS:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+
+            for attempt in range(3):
+                try:
+                    response = await client.post(
+                        url,
+                        json=payload,
+                        headers={"Content-Type": "application/json"}
+                    )
+
+                    if response.status_code == 429:
+                        wait_time = (attempt + 1) * 2
+                        await asyncio.sleep(wait_time)
+                        last_error = f"429 on {model}"
+                        continue
+
+                    response.raise_for_status()
+                    data = response.json()
+
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts:
+                            return parts[0].get("text", "").strip()
+
+                    last_error = f"Empty response from {model}"
+                    break
+
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 429:
+                        await asyncio.sleep((attempt + 1) * 2)
+                        last_error = f"429 on {model}"
+                        continue
+                    last_error = str(e)
+                    break
+
+                except Exception as e:
+                    last_error = str(e)
+                    break
+
+    return f"Error: All models failed. Last error: {last_error}"
 
 
 @app.post("/api/answer")
@@ -98,17 +127,16 @@ async def answer(request: Request):
             status_code=400,
             content={"output": "Invalid JSON in request body."}
         )
-    
+
     query = body.get("query", "")
     assets = body.get("assets", [])
-    
+
     if not query:
         return JSONResponse(
             status_code=400,
             content={"output": "No query provided."}
         )
-    
-    # Fetch asset content if URLs provided
+
     asset_context = ""
     if assets:
         contents = []
@@ -118,16 +146,14 @@ async def answer(request: Request):
                 contents.append(f"--- Content from {url} ---\n{content}")
         if contents:
             asset_context = "\n\n".join(contents)
-    
-    # Call Gemini
+
     answer_text = await call_gemini(query, asset_context)
-    
+
     return {"output": answer_text}
 
 
 @app.get("/")
 async def health():
-    """Health check endpoint."""
     return {"status": "alive", "message": "Hackathon API is running"}
 
 

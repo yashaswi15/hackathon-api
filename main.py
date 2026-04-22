@@ -34,7 +34,9 @@ OUTPUT RULES:
 - Words specified by rules (FIZZ, BUZZ, etc.) → ALL CAPS exactly as specified
 - If question says "output only the integer" → output only the integer: 4
 - Transaction extraction → format: "Name paid the amount of $X."
-- Polynomial expressions → use ** for exponents: x**2 - 5*x + 6"""
+- Polynomial in expanded form → use ^ for exponents, no * for multiplication: x^2 - 5x + 6
+- Polynomial in factored form → no spaces, no asterisks: (x-2)(x-3)
+- If asked for gcd polynomial with no format specified → return factored form: (x-2)(x-3)"""
 
 
 INJECTION_PATTERNS = [
@@ -60,6 +62,23 @@ def extract_actual_task(query: str) -> str:
     return query
 
 
+def sympy_to_math(expr: str) -> str:
+    """Convert sympy expanded form to standard math notation."""
+    expr = re.sub(r'\*\*(\d+)', r'^\1', expr)
+    expr = re.sub(r'(\d)\*([a-zA-Z])', r'\1\2', expr)
+    expr = re.sub(r'(?<![0-9])1([a-zA-Z])', r'\1', expr)
+    expr = re.sub(r'-1([a-zA-Z])', r'-\1', expr)
+    return expr
+
+
+def sympy_factored_to_math(expr: str) -> str:
+    """Convert (x - 2)*(x - 3) -> (x-2)(x-3)"""
+    expr = re.sub(r'\(\s*x\s*-\s*(\d+)\s*\)', r'(x-\1)', expr)
+    expr = re.sub(r'\(\s*x\s*\+\s*(\d+)\s*\)', r'(x+\1)', expr)
+    expr = re.sub(r'\)\s*\*\s*\(', ')(', expr)
+    return expr
+
+
 def extract_poly_str(text, var_name):
     pattern = rf'{var_name}\(x\)\s*=\s*(.+?)(?=\s+[a-zA-Z]\(x\)\s*=|\s+Compute|\s+Find|\s+Output|\s+What|$)'
     m = re.search(pattern, text, re.IGNORECASE)
@@ -71,15 +90,6 @@ def extract_poly_str(text, var_name):
     s = re.sub(r'\)[^()]*$', ')', s)
     s = re.sub(r'\)\s*\(', ')*(', s)
     return s
-
-
-def sympy_to_math(expr: str) -> str:
-    import re as _re
-    expr = _re.sub(r"\*\*(\d+)", r"^\1", expr)
-    expr = _re.sub(r"(\d)\*([a-zA-Z])", r"\1\2", expr)
-    expr = _re.sub(r"(?<![0-9])1([a-zA-Z])", r"\1", expr)
-    expr = _re.sub(r"-1([a-zA-Z])", r"-\1", expr)
-    return expr
 
 
 def try_polynomial_gcd(query: str):
@@ -102,6 +112,7 @@ def try_polynomial_gcd(query: str):
         g = gcd(Poly(p_expr, x), Poly(q_expr, x))
 
         q_lower = query.lower()
+
         if "degree" in q_lower:
             return str(g.degree())
         elif "common roots" in q_lower:
@@ -110,9 +121,10 @@ def try_polynomial_gcd(query: str):
         elif "expanded" in q_lower:
             return sympy_to_math(str(expand(g.as_expr())))
         elif "factored" in q_lower:
-            return sympy_to_math(str(factor(g.as_expr())))
+            return sympy_factored_to_math(str(factor(g.as_expr())))
         else:
-            return str(g.degree())
+            # Default: return factored form
+            return sympy_factored_to_math(str(factor(g.as_expr())))
 
     except Exception:
         return None
@@ -151,7 +163,6 @@ async def call_llm(query: str, asset_context: str = "") -> dict:
 
     debug_info = [f"injection_detected={had_injection}", f"clean_query={query[:100]}"]
 
-    # Try local polynomial GCD solver first
     if "gcd" in query.lower() and ("p(x)" in query or "q(x)" in query):
         local_ans = try_polynomial_gcd(query)
         if local_ans is not None:
@@ -235,8 +246,10 @@ async def answer(request: Request):
 async def debug():
     tests = [
         'Let: p(x) = (x−1)(x−2)(x−3)(x−4)(x−5)(x−6) q(x) = (x−3)(x−4)(x−5)(x−6)(x−7)(x−8) Compute the degree of the GCD polynomial gcd(p(x), q(x)) over Q. Output only the integer.',
-        'p(x) = (x-1)(x-2)(x-3)(x-4) q(x) = (x-3)(x-4)(x-5)(x-6) Find the common roots of gcd(p(x), q(x))',
         'p(x) = (x-1)(x-2)(x-3) q(x) = (x-2)(x-3)(x-4) Output the expanded GCD polynomial',
+        'p(x) = (x-1)(x-2)(x-3) q(x) = (x-2)(x-3)(x-4) Output the factored GCD polynomial',
+        'p(x) = (x-1)(x-2)(x-3) q(x) = (x-2)(x-3)(x-4) What is gcd(p(x), q(x))?',
+        'p(x) = (x-1)(x-2)(x-3)(x-4) q(x) = (x-3)(x-4)(x-5)(x-6) Find the common roots of gcd(p(x), q(x))',
     ]
     results = []
     for t in tests:

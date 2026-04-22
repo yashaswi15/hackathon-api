@@ -26,7 +26,10 @@ OUTPUT RULES:
 - Averages/sums/differences → integer if whole, one decimal if not: 85 or 85.5
 - Lists → comma-space separated: Alice, Bob, Charlie
 - Yes/No → Yes or No
-- True/False → True or False"""
+- True/False → True or False
+- When rules say output a word like "FIZZ" → output it in ALL CAPS with no quotes: FIZZ
+- When rules say output a number → output just the digit: 15
+- Execute ALL rules in sequence before outputting anything."""
 
 
 INJECTION_PATTERNS = [

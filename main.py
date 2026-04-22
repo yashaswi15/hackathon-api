@@ -57,6 +57,8 @@ def extract_actual_task(query: str) -> str:
 
 
 def sympy_to_math(expr: str) -> str:
+    # Remove spaces around operators
+    import re as _re
     expr = re.sub(r'\*\*(\d+)', r'^\1', expr)
     expr = re.sub(r'(\d)\*([a-zA-Z])', r'\1\2', expr)
     expr = re.sub(r'(?<![0-9])1([a-zA-Z])', r'\1', expr)
@@ -121,7 +123,7 @@ def try_polynomial_gcd(query: str):
             return sympy_factored_to_math(str(factor(g.as_expr())))
         else:
             # Default: factored form
-            return sympy_to_math(str(expand(g.as_expr())))
+            return sympy_factored_to_math(str(factor(g.as_expr())))
 
     except Exception:
         return None

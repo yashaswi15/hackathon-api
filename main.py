@@ -84,22 +84,88 @@ def is_browser_task(query: str) -> bool:
         "navigate to", "open the link", "go to link", "click on the"
     ])
 
-async def handle_browser_task(query: str, asset_urls: list) -> str | None:
-    """Handle browser automation tasks by fetching and analyzing the page."""
-    for url in asset_urls:
-        try:
-            # qa-practice.com button pages always return "Submitted" after clicking
-            if "qa-practice.com" in url and "button" in url:
-                return "Submitted"
+async def browser_automate(url: str, query: str) -> str:
+    """Use Playwright to automate browser interactions."""
+    try:
+        from playwright.async_api import async_playwright
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox",
+                      "--disable-dev-shm-usage", "--disable-gpu"]
+            )
+            page = await browser.new_page()
+            await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(1000)
 
-            # For other pages, fetch HTML and let Claude interpret
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(url)
-                html = resp.text[:8000]
-                return html  # Return as context for Claude
-        except Exception as e:
-            return None
-    return None
+            q_lower = query.lower()
+
+            # Step 1: Click tab if mentioned
+            for tab_name in ["simple button", "simple", "looks like a button", "disabled"]:
+                if tab_name in q_lower:
+                    try:
+                        await page.get_by_text(tab_name, exact=False).first.click()
+                        await page.wait_for_timeout(800)
+                        break
+                    except Exception:
+                        pass
+
+            # Step 2: Click the main button
+            for btn_selector in [
+                "button:has-text('Click')",
+                "button:has-text('Submit')",
+                "button:has-text('OK')",
+                "input[type='submit']",
+                "button[type='submit']",
+                ".btn",
+                "button",
+            ]:
+                try:
+                    el = page.locator(btn_selector).first
+                    if await el.is_visible():
+                        await el.click()
+                        await page.wait_for_timeout(1500)
+                        break
+                except Exception:
+                    continue
+
+            # Step 3: Extract confirmation message
+            # Try common result selectors
+            for selector in [
+                "#result", ".result", "[id*='result']", "[class*='result']",
+                "#message", ".message", "[class*='message']",
+                "#confirmation", ".confirmation",
+                "[class*='alert']", "[role='alert']",
+                ".success", "#success",
+                "p.text-center", ".text-success",
+            ]:
+                try:
+                    el = page.locator(selector).first
+                    if await el.is_visible(timeout=2000):
+                        text = (await el.inner_text()).strip()
+                        if text and len(text) < 200:
+                            await browser.close()
+                            return text
+                except Exception:
+                    pass
+
+            # Fallback: get all visible text changes
+            body = await page.inner_text("body")
+            await browser.close()
+
+            # Extract short meaningful lines
+            lines = [l.strip() for l in body.split('\n') if l.strip() and len(l.strip()) < 100]
+            # Look for confirmation-like short phrases
+            for line in lines:
+                if any(word in line.lower() for word in ["submitted", "success", "confirmed", "done", "thank", "congratul"]):
+                    return line
+
+            return lines[-1] if lines else "Unable to extract"
+
+    except ImportError:
+        return "[Playwright not installed]"
+    except Exception as e:
+        return f"[Browser error: {str(e)[:100]}]"
 
 async def call_llm(query: str, asset_context: str = "", asset_urls: list = []) -> dict:
     had_injection = detect_injection(query)
@@ -111,15 +177,11 @@ async def call_llm(query: str, asset_context: str = "", asset_urls: list = []) -
     # Handle browser tasks
     if is_browser_task(query) and asset_urls:
         debug_info.append("browser_task=True")
-        result = await handle_browser_task(query, asset_urls)
-        if result and len(result) < 200:
-            # Short result = direct answer (e.g. "Submitted")
-            debug_info.append(f"direct_answer={result}")
-            return {"answer": result, "raw": result, "debug": debug_info}
-        elif result:
-            # Long result = HTML content, pass to Claude
-            asset_context = f"Page HTML:\n{result}"
-            debug_info.append("using_html_context=True")
+        for url in asset_urls:
+            result = await browser_automate(url, query)
+            debug_info.append(f"browser_result={result[:100]}")
+            if result and not result.startswith("["):
+                return {"answer": result, "raw": result, "debug": debug_info}
 
     user_msg = query
     if asset_context:
@@ -127,7 +189,7 @@ async def call_llm(query: str, asset_context: str = "", asset_urls: list = []) -
     user_msg = f"<query>{user_msg}</query>"
 
     payload = {
-        "model": "claude-sonnet-4-5-20250514",
+        "model": "claude-sonnet-4-5",
         "max_tokens": 512,
         "system": SYSTEM_PROMPT,
         "messages": [{"role": "user", "content": user_msg}]
@@ -194,9 +256,8 @@ async def answer(request: Request):
 
 @app.get("/debug")
 async def debug():
-    # Test browser task
     result = await call_llm(
-        "Go to the link and click the simple button tab, then click Click button and return the confirmation message.",
+        "Go to the link and click simple button tab then click Click button and return confirmation message.",
         asset_urls=["https://www.qa-practice.com/elements/button/simple"]
     )
     return {

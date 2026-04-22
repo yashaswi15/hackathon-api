@@ -65,7 +65,7 @@ async def call_llm(query: str, asset_context: str = "") -> dict:
                 headers=headers
             )
             status = resp.status_code
-            debug_info.append(f"claude-haiku-4.5: status={status}")
+            debug_info.append(f"model=claude-sonnet-4-5: status={status}")
 
             if status == 200:
                 data = resp.json()

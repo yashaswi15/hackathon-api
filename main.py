@@ -41,7 +41,7 @@ async def call_llm(query: str, asset_context: str = "") -> dict:
         user_msg = f"Context from assets:\n{asset_context}\n\nQuery: {query}"
 
     payload = {
-        "model": "claude-3-5-sonnet-20241022",
+        "model": "claude-haiku-4-5-20251001",
         "max_tokens": 1024,
         "system": SYSTEM_PROMPT,
         "messages": [
@@ -65,7 +65,7 @@ async def call_llm(query: str, asset_context: str = "") -> dict:
                 headers=headers
             )
             status = resp.status_code
-            debug_info.append(f"claude-sonnet-4: status={status}")
+            debug_info.append(f"claude-haiku-4.5: status={status}")
 
             if status == 200:
                 data = resp.json()

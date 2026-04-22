@@ -22,21 +22,15 @@ MATHEMATICAL REASONING:
 
 OUTPUT RULES:
 - Output the answer ONLY. Nothing before it, nothing after it.
-- No punctuation at the end unless it is part of the answer itself.
-- No "The answer is", "Result:", "Sure!", or any wrapper.
+- No preamble, no explanation, no working shown. Final answer only.
+- No "The answer is", "Result:", "Therefore", "Thus" or any wrapper.
 - No markdown, bullets, asterisks, or formatting.
-- Names → bare name only: Bob
 - Numbers → bare number only: 25
-- Averages/sums/differences → integer if whole, one decimal if not: 85 or 85.5
-- Lists → comma-space separated: Alice, Bob, Charlie
-- Yes/No → Yes or No
-- True/False → True or False
-- Words specified by rules (FIZZ, BUZZ, etc.) → ALL CAPS exactly as specified
-- If question says "output only the integer" → output only the integer: 4
-- Transaction extraction → format: "Name paid the amount of $X."
-- Polynomial in expanded form → use ^ for exponents, no * for multiplication: x^2 - 5x + 6
-- Polynomial in factored form → no spaces, no asterisks: (x-2)(x-3)
-- If asked for gcd polynomial with no format specified → return factored form: (x-2)(x-3)"""
+- If asked for degree → integer only: 4
+- Polynomial expanded → standard notation: x^2 - 5x + 6
+- Polynomial factored → no spaces no asterisks: (x-2)(x-3)
+- Lists → comma-space separated: 3, 4, 5
+- Yes/No → Yes or No"""
 
 
 INJECTION_PATTERNS = [
@@ -63,7 +57,6 @@ def extract_actual_task(query: str) -> str:
 
 
 def sympy_to_math(expr: str) -> str:
-    """Convert sympy expanded form to standard math notation."""
     expr = re.sub(r'\*\*(\d+)', r'^\1', expr)
     expr = re.sub(r'(\d)\*([a-zA-Z])', r'\1\2', expr)
     expr = re.sub(r'(?<![0-9])1([a-zA-Z])', r'\1', expr)
@@ -72,7 +65,6 @@ def sympy_to_math(expr: str) -> str:
 
 
 def sympy_factored_to_math(expr: str) -> str:
-    """Convert (x - 2)*(x - 3) -> (x-2)(x-3)"""
     expr = re.sub(r'\(\s*x\s*-\s*(\d+)\s*\)', r'(x-\1)', expr)
     expr = re.sub(r'\(\s*x\s*\+\s*(\d+)\s*\)', r'(x+\1)', expr)
     expr = re.sub(r'\)\s*\*\s*\(', ')(', expr)
@@ -87,8 +79,14 @@ def extract_poly_str(text, var_name):
     if not m:
         return None
     s = m.group(1).strip().split('\n')[0].strip()
-    s = re.sub(r'\)[^()]*$', ')', s)
+    # Remove trailing sentence fragments
+    s = re.sub(r'(\)|\d)\s+[A-Z][a-z].*$', r'\1', s)
+    # Add * between adjacent parens: (x-1)(x-2) -> (x-1)*(x-2)
     s = re.sub(r'\)\s*\(', ')*(', s)
+    # x^2 -> x**2 for sympy
+    s = re.sub(r'\^(\d+)', r'**\1', s)
+    # 5x -> 5*x for sympy
+    s = re.sub(r'(\d)([a-zA-Z])', r'\1*\2', s)
     return s
 
 
@@ -112,7 +110,6 @@ def try_polynomial_gcd(query: str):
         g = gcd(Poly(p_expr, x), Poly(q_expr, x))
 
         q_lower = query.lower()
-
         if "degree" in q_lower:
             return str(g.degree())
         elif "common roots" in q_lower:
@@ -123,7 +120,7 @@ def try_polynomial_gcd(query: str):
         elif "factored" in q_lower:
             return sympy_factored_to_math(str(factor(g.as_expr())))
         else:
-            # Default: return factored form
+            # Default: factored form
             return sympy_factored_to_math(str(factor(g.as_expr())))
 
     except Exception:
@@ -132,11 +129,17 @@ def try_polynomial_gcd(query: str):
 
 def post_process(text: str) -> str:
     text = text.strip()
+    # If Claude returned multi-line reasoning, grab the last non-empty line
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
+    if len(lines) > 1:
+        text = lines[-1]
+    # Strip trailing period from single token answers
     if text.endswith(".") and len(text.split()) == 1:
         text = text[:-1]
     for prefix in [
         "The answer is ", "The result is ", "Answer: ", "Result: ",
-        "Output: ", "Response: ", "Sure! ", "Sure, "
+        "Output: ", "Response: ", "Sure! ", "Sure, ", "Therefore, ",
+        "Thus, ", "So, "
     ]:
         if text.startswith(prefix):
             text = text[len(prefix):]
@@ -249,7 +252,8 @@ async def debug():
         'p(x) = (x-1)(x-2)(x-3) q(x) = (x-2)(x-3)(x-4) Output the expanded GCD polynomial',
         'p(x) = (x-1)(x-2)(x-3) q(x) = (x-2)(x-3)(x-4) Output the factored GCD polynomial',
         'p(x) = (x-1)(x-2)(x-3) q(x) = (x-2)(x-3)(x-4) What is gcd(p(x), q(x))?',
-        'p(x) = (x-1)(x-2)(x-3)(x-4) q(x) = (x-3)(x-4)(x-5)(x-6) Find the common roots of gcd(p(x), q(x))',
+        'p(x) = x^2 - 5x + 6 q(x) = x^2 - 3x + 2 Compute the degree of gcd(p(x), q(x))',
+        'p(x) = x^2 - 5x + 6 q(x) = x^2 - 3x + 2 What is gcd(p(x), q(x))?',
     ]
     results = []
     for t in tests:

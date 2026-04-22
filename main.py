@@ -57,12 +57,12 @@ def extract_actual_task(query: str) -> str:
 
 
 def sympy_to_math(expr: str) -> str:
-    # Remove spaces around operators
-    import re as _re
     expr = re.sub(r'\*\*(\d+)', r'^\1', expr)
     expr = re.sub(r'(\d)\*([a-zA-Z])', r'\1\2', expr)
     expr = re.sub(r'(?<![0-9])1([a-zA-Z])', r'\1', expr)
     expr = re.sub(r'-1([a-zA-Z])', r'-\1', expr)
+    expr = expr.replace(' + ', '+').replace(' - ', '-')
+    return expr.strip()
     return expr
 
 
@@ -181,7 +181,7 @@ async def call_llm(query: str, asset_context: str = "") -> dict:
     user_msg = f"<query>{user_msg}</query>"
 
     payload = {
-        "model": "claude-sonnet-4-5",
+        "model": "claude-sonnet-4-5-20250514",
         "max_tokens": 256,
         "system": SYSTEM_PROMPT,
         "messages": [{"role": "user", "content": user_msg}]

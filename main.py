@@ -175,7 +175,7 @@ async def answer(request: Request):
 
 @app.get("/debug")
 async def debug():
-    test = 'Apply rules in order to input number 6: Rule 1: If even → double it. If odd → add 10. Rule 2: If result > 20 → subtract 5. Otherwise → add 3. Rule 3: If final result divisible by 3 → output "FIZZ". Otherwise → output the number.'
+    test = 'The following is a transaction log. Extract the FIRST transaction greater than $100 made by a user whose name starts with S. Log: - Alice paid $45 | Sam paid $80 | Steve paid $210 | Bob paid $310 - Sophie paid $95 | Sara paid $150 | Tom paid $500 | Sally paid $130'
     result = await call_llm(test)
     return {
         "api_key_set": bool(CLAUDE_API_KEY),

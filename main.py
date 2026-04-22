@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+CLAUDE_API_KEY = os.environ.get("CLAUDE_API_KEY", "")
 
 SYSTEM_PROMPT = """You are a precise answer engine.
 
@@ -16,6 +16,7 @@ RULES:
 4. For facts: state the fact directly
 5. Never say "Sure!", "Here's the answer", "I think", etc.
 6. Be direct and concise
+7. Do NOT use markdown formatting
 
 If context from assets is provided, use it to answer the query.
 """
@@ -35,45 +36,47 @@ async def fetch_asset_content(url: str) -> str:
 
 
 async def call_llm(query: str, asset_context: str = "") -> dict:
-    """Returns dict with 'answer' and 'debug' info."""
     user_msg = query
     if asset_context:
         user_msg = f"Context from assets:\n{asset_context}\n\nQuery: {query}"
 
     payload = {
-        "contents": [
-            {"role": "user", "parts": [{"text": f"{SYSTEM_PROMPT}\n\nQuery: {user_msg}"}]}
-        ],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 1024}
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 1024,
+        "system": SYSTEM_PROMPT,
+        "messages": [
+            {"role": "user", "content": user_msg}
+        ]
     }
 
-    models = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": CLAUDE_API_KEY,
+        "anthropic-version": "2023-06-01"
+    }
+
     debug_info = []
 
     async with httpx.AsyncClient(timeout=18.0) as client:
-        for model in models:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
-            try:
-                resp = await client.post(url, json=payload)
-                status = resp.status_code
-                body = resp.text[:500]
-                debug_info.append(f"{model}: status={status}, body={body}")
+        try:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                json=payload,
+                headers=headers
+            )
+            status = resp.status_code
+            debug_info.append(f"claude-sonnet-4: status={status}")
 
-                if status == 429:
-                    continue
-                if status != 200:
-                    continue
-
+            if status == 200:
                 data = resp.json()
-                candidates = data.get("candidates", [])
-                if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    if parts:
-                        return {"answer": parts[0].get("text", "").strip(), "debug": debug_info}
+                content = data.get("content", [])
+                if content:
+                    return {"answer": content[0].get("text", "").strip(), "debug": debug_info}
 
-            except Exception as e:
-                debug_info.append(f"{model}: exception={str(e)}")
-                continue
+            debug_info.append(f"body={resp.text[:300]}")
+
+        except Exception as e:
+            debug_info.append(f"exception={str(e)}")
 
     return {"answer": None, "debug": debug_info}
 
@@ -109,14 +112,12 @@ async def answer(request: Request):
         return {"output": "Unable to process query."}
 
 
-# DEBUG ENDPOINT — hit this in browser to see exactly what's failing
 @app.get("/debug")
 async def debug():
-    """Test Gemini directly and show raw response."""
     result = await call_llm("What is 2 + 2?")
     return {
-        "api_key_set": bool(GEMINI_API_KEY),
-        "api_key_first_10": GEMINI_API_KEY[:10] + "..." if GEMINI_API_KEY else "EMPTY",
+        "api_key_set": bool(CLAUDE_API_KEY),
+        "api_key_first_10": CLAUDE_API_KEY[:10] + "..." if CLAUDE_API_KEY else "EMPTY",
         "debug": result["debug"],
         "answer": result["answer"]
     }

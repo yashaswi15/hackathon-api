@@ -33,7 +33,9 @@ OUTPUT RULES:
 - Lists → comma-space separated: Alice, Bob, Charlie
 - Yes/No → Yes or No
 - True/False → True or False
-- Words specified by rules (FIZZ, BUZZ, etc.) → ALL CAPS exactly as specified"""
+- Words specified by rules (FIZZ, BUZZ, etc.) → ALL CAPS exactly as specified
+- If the question asks to extract/identify a record and the expected format is a sentence → output a complete sentence ending with a period.
+- "X paid the amount of $Y." format for transaction extraction questions."""
 
 
 # Much tighter injection patterns — only fire on clear attacks
@@ -62,7 +64,7 @@ def extract_actual_task(query: str) -> str:
 
 def post_process(text: str) -> str:
     text = text.strip()
-    if text.endswith(".") and "\n" not in text and len(text.split()) <= 6:
+    if text.endswith(".") and len(text.split()) == 1:
         text = text[:-1]
     for prefix in [
         "The answer is ", "The result is ", "Answer: ", "Result: ",

@@ -121,7 +121,7 @@ def try_polynomial_gcd(query: str):
             return sympy_factored_to_math(str(factor(g.as_expr())))
         else:
             # Default: factored form
-            return sympy_factored_to_math(str(factor(g.as_expr())))
+            return sympy_to_math(str(expand(g.as_expr())))
 
     except Exception:
         return None
